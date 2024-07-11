@@ -8,13 +8,18 @@ import com.hmdp.service.ISeckillVoucherService;
 import com.hmdp.service.IVoucherOrderService;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.hmdp.utils.RedisIdWorker;
+import com.hmdp.utils.SimpleRedisLock;
 import com.hmdp.utils.UserHolder;
+import org.redisson.api.RLock;
+import org.redisson.api.RedissonClient;
 import org.springframework.aop.framework.AopContext;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import javax.annotation.Resource;
 import java.time.LocalDateTime;
+import java.util.concurrent.TimeUnit;
 
 /**
  * <p>
@@ -32,6 +37,12 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
 
     @Resource
     private RedisIdWorker redisIdWorker;
+
+    @Resource
+    private StringRedisTemplate stringRedisTemplate;
+
+    @Resource
+    private RedissonClient redissonClient;
 
     @Override
     public Result seckillVoucher(Long voucherId) {
@@ -53,6 +64,29 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
         }
 
         Long userId = UserHolder.getUser().getId();
+
+        /**
+         * 自己写的分布式锁
+         */
+//        // 创建锁对象(新增代码)
+//        SimpleRedisLock lock = new SimpleRedisLock("order:" + userId, stringRedisTemplate);
+//
+//        // 获取锁对象
+//        boolean isLock = lock.tryLock(1200);
+
+        /**
+         * 使用redisson创建分布式锁
+         */
+        RLock lock = redissonClient.getLock("lock:order:" + userId);
+        // boolean tryLock(), 默认时间为1s, 30s过期
+        // boolean tryLock(long time, TimeUnit unit)
+        // boolean tryLock(long var1, long var3, TimeUnit var5)
+        boolean isLock = lock.tryLock();
+
+        if(!isLock){
+            return Result.fail("不允许重复下单");
+        }
+
         synchronized (userId.toString().intern()){
             // 获取代理对象
             IVoucherOrderService proxy = (IVoucherOrderService)AopContext.currentProxy();
